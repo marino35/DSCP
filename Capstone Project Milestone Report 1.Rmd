@@ -1,0 +1,252 @@
+---
+title: "Capstone Project Milestone Report 1"
+author: "Metehan Soysal"
+date: "2023-04-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Context
+
+The objective of this milestone report is to provide a step by step process to prepare a dataset which will be used to train a prediction model.
+
+There are 3 data sources provided to be used for this project (Blogs, News, Twitter). Even though there are multiple languages provided, English language files will be used for this project.
+
+## Loading the libraries
+
+```{r message=FALSE}
+library(stringi); library(xtable); library(tm); library(tidytext); library(tokenizers);library(stringr);library(dplyr);library(ggplot2);
+library(quanteda); library(quanteda.textstats);library(ngram)
+```
+
+## Read the data
+
+```{r}
+dataset_url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+dest_file <- "dataset.zip"
+
+if (!file.exists(dest_file)) {
+        download.file(dataset_url, destfile=dest_file, method="curl")
+}
+```
+
+## Unzip the data
+
+```{r}
+dest_dir <- "/Users/metehansoysal/Documents/Projects/R Programming Class/Capstone Project/final"
+if (!dir.exists(dest_dir)) {
+        path <- "/Users/metehansoysal/Documents/Projects/R Programming Class/Capstone Project"
+        unzip(dest_file, exdir = path)        
+}
+```
+
+## File Processing
+
+### Assign the data files to variables in R
+
+```{r}
+blog_file <- "/Users/metehansoysal/Documents/Projects/R Programming Class/Capstone Project/final/en_US/en_US.blogs.txt"
+news_file <- "/Users/metehansoysal/Documents/Projects/R Programming Class/Capstone Project/final/en_US/en_US.news.txt"
+twitter_file <- "/Users/metehansoysal/Documents/Projects/R Programming Class/Capstone Project/final/en_US/en_US.twitter.txt"
+
+con_blog <- file(blog_file, open = "r")
+con_news <- file(news_file, open = "r")
+con_twitter <- file(twitter_file, open = "r")
+
+rblog <- readLines(con = con_blog, encoding = "UTF-8", skipNul = TRUE)
+rnews <- readLines(con = con_news, encoding = "UTF-8", skipNul = TRUE)
+rtwitter <- readLines(con = con_twitter, encoding = "UTF-8", skipNul = TRUE)
+
+close(con_blog); close(con_news); close(con_twitter)
+```
+
+### File Sizes in MBs
+
+```{r}
+blog_size <- round(file.info(blog_file)$size / 1024^2)
+news_size <- round(file.info(news_file)$size / 1024^2)
+twitter_size <- round(file.info(twitter_file)$size / 1024^2)
+
+file_sizes <- c(blog_size, news_size, twitter_size)
+```
+
+### Number of lines
+
+```{r}
+number_of_lines<- sapply(list(rblog, rnews, rtwitter), length)
+```
+
+### Number of Words Per Line
+
+```{r}
+words_per_line <- lapply(list(rblog, rnews, rtwitter), function(x) stri_count_words(x))
+ggplot(data.frame(words_per_line[[1]]), aes(x = words_per_line[[1]])) +
+  geom_histogram(binwidth = 50, color = "black", fill = "white") +
+  labs(title = "Blog", x = "Words per Line", y = "Frequency")
+
+ggplot(data.frame(words_per_line[[2]]), aes(x = words_per_line[[2]])) +
+  geom_histogram(binwidth = 50, color = "black", fill = "white") +
+  labs(title = "News", x = "Words per Line", y = "Frequency")
+
+ggplot(data.frame(words_per_line[[3]]), aes(x = words_per_line[[3]])) +
+  geom_histogram(binwidth = 5, color = "black", fill = "white") +
+  labs(title = "Twitter", x = "Words per Line", y = "Frequency")
+
+wpl_summary <- sapply(list(rblog, rnews, rtwitter), 
+                      function(x) summary(stri_count_words(x))[c('Min.', 'Mean', 'Max.')])
+rownames(wpl_summary) <- c("Min", "Mean", "Max")
+colnames(wpl_summary) <- c("Blog", "News", "Twitter")
+wpl_summary
+rm(words_per_line, wpl_summary,dataset_url, dest_dir, dest_file)
+```
+
+### Number of Words
+
+```{r}
+number_of_words <- sapply(list(rblog, rnews, rtwitter), stri_stats_latex)[4,]
+```
+
+### Summary
+
+```{r}
+sum_files <- data.frame(
+                File_Name = c("Blog", "News", "Twitter"),
+                File_Size_MB = file_sizes,
+                Lines = number_of_lines,
+                Words = number_of_words
+)
+print(sum_files)
+rm(twitter_file, twitter_size, news_file, news_size, blog_file, blog_size, con_blog, con_news, con_twitter, sum_files, number_of_lines, number_of_words)
+```
+
+## Sampling the Dataset
+
+### Sampling at 1% of Each Dataset
+
+```{r}
+set.seed(1234)
+sample_size <- 0.01
+
+rblog_sampled <- sample(rblog, length(rblog) * sample_size, replace = FALSE)
+rnews_sampled <- sample(rnews, length(rnews) * sample_size, replace = FALSE)
+rtwit_sampled <- sample(rtwitter, length(rtwitter) * sample_size, replace = FALSE)
+```
+
+### Cleaning the Non-English Characters
+
+```{r}
+# remove all non-English characters from the sampled data
+rblog_sampled <- iconv(rblog_sampled, "latin1", "ASCII", sub = "")
+rnews_sampled <- iconv(rnews_sampled, "latin1", "ASCII", sub = "")
+rtwit_sampled <- iconv(rtwit_sampled, "latin1", "ASCII", sub = "")
+```
+
+## Building the Corpus and Cleaning
+
+### Initial Corpus Build
+
+```{r}
+corpus <- VCorpus(VectorSource(c(rblog_sampled, rnews_sampled, rtwit_sampled)))
+rm(rblog, rnews, rtwitter)
+```
+
+### Remove profanity words, URLs, and other unwanted patterns from the corpus
+
+```{r}
+# Load the profanity words
+profanity_words <- readLines("https://github.com/coffee-and-fun/google-profanity-words/raw/main/data/list.txt")
+
+profanity <- iconv(profanity_words, "latin1", "ASCII", sub = "")
+corpus <- tm_map(corpus, removeWords, profanity)
+
+# URLs, Twitter handles, email patterns, and stopwords from the corpus
+replace_with_space <- content_transformer(function(x, pattern) gsub(pattern, " ", x))
+corpus <- tm_map(corpus, replace_with_space, "http\\S+|www\\.\\S+")
+corpus <- tm_map(corpus, replace_with_space, "@\\w+")
+corpus <- tm_map(corpus, replace_with_space, "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b")
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, content_transformer(removePunctuation))
+corpus <- tm_map(corpus, content_transformer(removeNumbers))
+corpus <- tm_map(corpus, content_transformer(stripWhitespace))
+rm(rblog_sampled, rnews_sampled, rtwit_sampled, profanity, profanity_words)
+```
+
+## Finding and Plotting Highest Frequency Words
+
+```{r}
+# Create a term-document matrix
+tdm <- TermDocumentMatrix(corpus)
+
+# Convert the tdm to a data frame
+freq_df <- as.data.frame(inspect(tdm))
+
+# Compute the total frequency of each term
+freq_df$freq <- rowSums(freq_df[, -1])
+
+# Sort the data frame by frequency in descending order
+freq_df_sorted <- freq_df %>% arrange(desc(freq))
+
+# Select the top 10 most frequent terms
+top_terms <- head(freq_df_sorted$freq, n = 10)
+
+# Create a bar plot of the top 10 most frequent terms
+ggplot(freq_df_sorted[1:10,], aes(x = reorder(row.names(freq_df_sorted[1:10,]),-freq), y = freq)) + 
+  geom_bar(stat = "identity") +
+  ggtitle("Top 10 Most Frequent Words") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab("Term") + ylab("Frequency")
+rm(tdm, freq_df, freq_df_sorted, top_terms, sample_size)
+```
+
+## Tokenizing and Building N-Grams
+
+### 
+
+### Creating Unigrams, Bigrams, and Trigrams & Plotting Top 10
+```{r}
+corpus_text <- tm_map(corpus, PlainTextDocument)
+corpus_df <- data.frame(text = unlist(sapply(corpus_text, '[', "content")), stringsAsFactors = FALSE)
+ngram1 <- corpus_df %>% 
+        unnest_tokens(word, text, token = "ngrams", n = 1) %>%
+        count(word, sort = TRUE)
+ngram2 <- corpus_df %>% 
+        unnest_tokens(word, text, token = "ngrams", n = 2) %>%
+        subset(!is.na(word)) %>%
+        count(word, sort = TRUE)
+ngram3 <- corpus_df %>% 
+        unnest_tokens(word, text, token = "ngrams", n = 3) %>%
+        subset(!is.na(word)) %>%
+        count(word, sort = TRUE)
+
+top_10_unigrams <- ngram1 %>% arrange(desc(n)) %>% head(10)
+ggplot(top_10_unigrams, aes(x = reorder(word,n), y = n)) + 
+        geom_bar(stat = "identity", fill = "darkgreen") +
+        geom_text(aes(label = n), vjust = 1.5, hjust = 0.5, colour = "white") +
+        labs(x = "Top 10 Unigrams", y = "Count")
+
+top_10_bigrams <- ngram2 %>% arrange(desc(n)) %>% head(10)
+ggplot(top_10_bigrams, aes(x = reorder(word,n), y = n)) + 
+        geom_bar(stat = "identity", fill = "darkred") +
+        geom_text(aes(label = n), vjust = 1.5, hjust = 0.5, colour = "white") +
+        labs(x = "Top 10 Bigrams", y = "Count")
+
+top_10_trigrams <- ngram3 %>% arrange(desc(n)) %>% head(10)
+ggplot(top_10_trigrams, aes(x = reorder(word,n), y = n)) + 
+        geom_bar(stat = "identity", fill = "darkblue") +
+        geom_text(aes(label = n), vjust = 1.5, hjust = 0.5, colour = "white") +
+        labs(x = "Top 10 Trigrams", y = "Count")
+rm(top_10_bigrams, top_10_unigrams, top_10_trigrams)
+```
+
+
+## Prediction Model
+
+### Model with words existing in corpus
+This function below uses the ngrams built in the previous section and given a long sentence it finds the best match for the next word.
+```{r}
+predict_next_word
+```

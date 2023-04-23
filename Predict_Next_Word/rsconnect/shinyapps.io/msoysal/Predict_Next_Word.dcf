@@ -1,0 +1,13 @@
+name: Predict_Next_Word
+title: Predict_Next_Word
+username:
+account: msoysal
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 8923913
+bundleId: 7122256
+url: https://msoysal.shinyapps.io/Predict_Next_Word/
+when: 1682190004.68295
+lastSyncTime: 1682190004.68296
+asMultiple: FALSE
+asStatic: FALSE
